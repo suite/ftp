@@ -23,6 +23,46 @@ void error(char *msg) {
   exit(1);
 }
 
+
+/*
+ * execute_buf - parse and execute commands from user
+ */
+// TODO: handle ugly new lines
+int execute_buf(char *buf) {
+  // Execute ls
+  if (strcmp(buf, "ls\n") == 0) {
+    // clear out buf to put response in
+    bzero(buf, BUFSIZE);
+
+    printf("ls command detected on server\n");
+   
+    FILE *fp;
+    fp = popen("ls -la", "r");
+    if (fp == NULL) {
+      fprintf(stderr,"ERROR, could not run ls command", buf);
+      return -1;
+    }
+
+    // read BUFSIZE amount of size 1 bytes into buf
+    size_t bytes_read = fread(buf, 1, BUFSIZE, fp);
+    printf("read %d bytes\n", bytes_read);
+    printf("new buf:\n%s\n", buf);
+    
+    if (pclose(fp) == -1) {
+       fprintf(stderr,"ERROR, could not close ls command", buf);
+       return -1;
+    }
+
+    return 1;
+  } else if (strcmp(buf, "exit\n") == 0) {
+    bzero(buf, BUFSIZE);
+    strncpy(buf, "goodbye", BUFSIZE - 1);
+    return 1; 
+  }
+
+  return -1;
+}
+
 int main(int argc, char **argv) {
   int sockfd; /* socket */
   int portno; /* port to listen on */
@@ -65,8 +105,8 @@ int main(int argc, char **argv) {
    */
   bzero((char *) &serveraddr, sizeof(serveraddr));
   serveraddr.sin_family = AF_INET;
-  serveraddr.sin_addr.s_addr = htonl(INADDR_ANY);
-  serveraddr.sin_port = htons((unsigned short)portno);
+  serveraddr.sin_addr.s_addr = htonl(INADDR_ANY); // set host ip
+  serveraddr.sin_port = htons((unsigned short)portno); // set port
 
   /* 
    * bind: associate the parent socket with a port 
@@ -75,16 +115,25 @@ int main(int argc, char **argv) {
 	   sizeof(serveraddr)) < 0) 
     error("ERROR on binding");
 
+  /*
+    
+  */
+  printf("Server started, listening on port %d\n", portno);
+
   /* 
    * main loop: wait for a datagram, then echo it
    */
   clientlen = sizeof(clientaddr);
   while (1) {
 
+    // pending_response, pending_message, idle
+
     /*
      * recvfrom: receive a UDP datagram from a client
      */
+    // Empty out message buf
     bzero(buf, BUFSIZE);
+    // Inject n with client message
     n = recvfrom(sockfd, buf, BUFSIZE, 0,
 		 (struct sockaddr *) &clientaddr, &clientlen);
     if (n < 0)
@@ -103,6 +152,15 @@ int main(int argc, char **argv) {
     printf("server received datagram from %s (%s)\n", 
 	   hostp->h_name, hostaddrp);
     printf("server received %d/%d bytes: %s\n", strlen(buf), n, buf);
+
+
+    printf("Executing command %s\n", buf);
+    
+    // execute buf runs command and puts response back into buf
+    if (execute_buf(buf) < 0) {
+      fprintf(stderr,"ERROR, could not execute command");
+      continue;  
+    }
     
     /* 
      * sendto: echo the input back to the client 
