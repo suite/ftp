@@ -23,21 +23,20 @@ void error(char *msg) {
   exit(1);
 }
 
-
 /*
  * execute_buf - parse and execute commands from user
  */
-// TODO: handle ugly new lines
 int execute_buf(char *buf) {
+  char *token = strtok(buf, " \n");
   // Execute ls
-  if (strcmp(buf, "ls\n") == 0) {
+  if (token && strcmp(token, "ls") == 0) {
     // clear out buf to put response in
     bzero(buf, BUFSIZE);
 
     printf("ls command detected on server\n");
    
     FILE *fp;
-    fp = popen("ls -la", "r");
+    fp = popen("ls -l", "r");
     if (fp == NULL) {
       fprintf(stderr,"ERROR, could not run ls command", buf);
       return -1;
@@ -54,9 +53,25 @@ int execute_buf(char *buf) {
     }
 
     return 1;
-  } else if (strcmp(buf, "exit\n") == 0) {
+  } else if (token && strcmp(token, "exit") == 0) {
     bzero(buf, BUFSIZE);
     strncpy(buf, "goodbye", BUFSIZE - 1);
+    return 1; 
+  } else if (token && strcmp(token, "delete") == 0) {
+    char *filename = strtok(NULL, "\n"); 
+
+    printf("delete command detected on server %s\n", filename);
+    
+    char* result;
+    if(remove(filename) == 0) {
+      result = "Deleted file";
+    } else {
+      result = "Error deleting file";
+    }
+
+    // clear buf and put result inside
+    bzero(buf, BUFSIZE);
+    strncpy(buf, result, BUFSIZE - 1);
     return 1; 
   }
 

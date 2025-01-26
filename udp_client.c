@@ -50,7 +50,11 @@ int verify_command(char *buf) {
     return 1;
   } else if (strcmp(buf, "exit\n") == 0) {
     return 1; 
-  }
+  } else if (strncmp(buf, "delete ", 7) == 0) { // starts with "delete "
+    // char *filename = buf + 7;
+
+    return 1; 
+  } 
 
   return -1;
 }
@@ -67,10 +71,6 @@ void print_hex(char *buf) {
   }
 
   printf("\n");
-}
-
-void terminate() {
-
 }
 
 int main(int argc, char **argv) {
