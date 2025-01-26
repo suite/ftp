@@ -23,11 +23,22 @@ void error(char *msg) {
   exit(1);
 }
 
+void print_hex(char *buf, size_t len) {
+  printf("hex: ");
+  for (int i = 0; i < len; i++) {
+      // prevent sign extension (unsigned char)
+      printf("%02X ", (unsigned char)buf[i]);
+  }
+
+  printf("\n");
+}
+
 /*
  * execute_buf - parse and execute commands from user
  */
 int execute_buf(char *buf) {
   char *token = strtok(buf, " \n");
+
   // Execute ls
   if (token && strcmp(token, "ls") == 0) {
     // clear out buf to put response in
@@ -35,20 +46,19 @@ int execute_buf(char *buf) {
 
     printf("ls command detected on server\n");
    
-    FILE *fp;
-    fp = popen("ls -l", "r");
+    FILE *fp = popen("ls -l", "r");
     if (fp == NULL) {
-      fprintf(stderr,"ERROR, could not run ls command", buf);
+      fprintf(stderr,"ERROR, could not run ls command\n");
       return -1;
     }
 
     // read BUFSIZE amount of size 1 bytes into buf
     size_t bytes_read = fread(buf, 1, BUFSIZE, fp);
-    printf("read %d bytes\n", bytes_read);
+    printf("read %ld bytes\n", bytes_read);
     printf("new buf:\n%s\n", buf);
     
     if (pclose(fp) == -1) {
-       fprintf(stderr,"ERROR, could not close ls command", buf);
+       fprintf(stderr,"ERROR, could not close ls command\n");
        return -1;
     }
 
@@ -59,6 +69,7 @@ int execute_buf(char *buf) {
     return 1; 
   } else if (token && strcmp(token, "delete") == 0) {
     char *filename = strtok(NULL, "\n"); 
+    if(!filename) return -1;
 
     printf("delete command detected on server %s\n", filename);
     
@@ -72,6 +83,45 @@ int execute_buf(char *buf) {
     // clear buf and put result inside
     bzero(buf, BUFSIZE);
     strncpy(buf, result, BUFSIZE - 1);
+    return 1; 
+  } else if (buf[0] == 0x00) {
+
+    printf("PUT BINARY CALL\n");
+    print_hex(buf, BUFSIZE);
+    // printf("counter: %02X\n", buf[1]);
+    // printf("count to: %02X\n", buf[2]);
+    int arguments = 6;
+    int counter_1 = buf[1];
+    int counter_2 = buf[2];
+
+    int count_to_1 = buf[3];
+    int count_to_2 = buf[4];
+
+    int filename_l = buf[5];
+
+    char *filename = malloc(filename_l + 1); // +1 for null terminator
+    strncpy(filename, buf + arguments, filename_l);
+    filename[filename_l] = '\0';
+
+    // if counter < count to
+      // store buffer, seek to end, continue building
+    // else, counter >= count to
+
+    // read file to disk
+    FILE *fp = fopen(filename, "wb");
+    if(fp == NULL) return -1; 
+
+    int bytes_used = arguments+filename_l;
+
+    // TODO: BUFSIZE-bytes_used, bytes_used should include bytes written!!! will corrupt
+    size_t bytes_written = fwrite(buf+bytes_used, 1, BUFSIZE-bytes_used, fp);
+    printf("Wrote %ld bytes\n", bytes_written);
+
+    fclose(fp);
+
+    // // clear buf and put result inside
+    bzero(buf, BUFSIZE);
+    strncpy(buf, "putting..", BUFSIZE - 1);
     return 1; 
   }
 
@@ -166,21 +216,22 @@ int main(int argc, char **argv) {
       error("ERROR on inet_ntoa\n");
     printf("server received datagram from %s (%s)\n", 
 	   hostp->h_name, hostaddrp);
-    printf("server received %d/%d bytes: %s\n", strlen(buf), n, buf);
+    printf("server received %ld/%d bytes: %s\n", strlen(buf), n, buf);
 
 
     printf("Executing command %s\n", buf);
     
     // execute buf runs command and puts response back into buf
     if (execute_buf(buf) < 0) {
-      fprintf(stderr,"ERROR, could not execute command");
+      fprintf(stderr,"ERROR, could not execute command\n");
       continue;  
     }
     
     /* 
      * sendto: echo the input back to the client 
+     * TODO: dont need to send BUFSIZE everytime
      */
-    n = sendto(sockfd, buf, strlen(buf), 0, 
+    n = sendto(sockfd, buf, BUFSIZE, 0, 
 	       (struct sockaddr *) &clientaddr, clientlen);
     if (n < 0) 
       error("ERROR in sendto");

@@ -44,14 +44,77 @@ void error(char *msg) {
 /*
  * verify_command - parse and verify commands from user
  */
-// TODO: handle ugly new lines
 int verify_command(char *buf) {
-  if (strcmp(buf, "ls\n") == 0) {
+  char *token = strtok(buf, " \n");
+  if (!token) return -1;
+
+  if (strcmp(token, "ls") == 0) {
     return 1;
-  } else if (strcmp(buf, "exit\n") == 0) {
+  } else if (strcmp(token, "exit") == 0) {
     return 1; 
-  } else if (strncmp(buf, "delete ", 7) == 0) { // starts with "delete "
-    // char *filename = buf + 7;
+  } else if (strcmp(token, "delete") == 0) {
+    return 1; 
+  } else if (strcmp(token, "put") == 0) {
+    // get file name
+    char *filename = strtok(NULL, "\n");
+    if(!filename) return -1; 
+
+    // read file (2000bytes)
+    FILE *fp = fopen(filename, "r");
+    if(fp == NULL) return -1;
+    
+    // // get size
+    if(fseek(fp, 0, SEEK_END) < 0) return -1;
+    long size = ftell(fp);
+    if(size < 0) return -1;
+    if(fseek(fp, 0, SEEK_SET));
+
+    printf("Putting File: %s Size: %ld\n", filename, size);
+
+    if(size >= BUFSIZE) {
+      printf("FILE TOO BIG!!!\n");
+      return -1;
+    }
+
+    // Setup packet
+    size_t filename_l = strlen(filename);
+
+    // copy filename first so we dont overwrite
+    int arguments = 6;
+    strncpy(buf+arguments, filename, 255);
+
+    buf[0] = 0x00; // [0] 0x00 = put command
+    
+    buf[1] = 0x00; // [1]/[2] 0x00 00 = counter [0,65535]
+    buf[2] = 0x00;
+
+    buf[3] = 0x00; // [3]/[4] 0x00 00 = count to [0,65535]
+    buf[4] = 0x00;
+
+    buf[5] = filename_l; // [3] SET TO BYTE LENGTH OF filename [0,255]
+
+    // Overwrite rest with file contents
+    int bytes_used = arguments+filename_l;
+    
+    size_t bytes_read = fread(buf+bytes_used, 1, BUFSIZE-bytes_used, fp);
+    printf("read %ld bytes\n", bytes_read);
+    print_hex(buf, BUFSIZE);
+
+    // Final packet size
+    bytes_used += bytes_read;
+
+    // make sure to close
+    if(fclose(fp) < 0) return -1; 
+
+    // num sends = 2000/BUFSIZE (1024)
+    // num sends 2
+    // put 1 2 [first chunk of data]
+    // wait for server ack
+    // put 2 2 [second and final chunk of data]
+    // wait for server ack
+    // transferred
+
+    // set pending_message = 1
 
     return 1; 
   } 
@@ -62,12 +125,11 @@ int verify_command(char *buf) {
 /*
  *
  */
-void print_hex(char *buf) {
-  printf("hex: ", buf);
-  int len = strlen(buf);
-
+void print_hex(char *buf, size_t len) {
+  printf("hex: ");
   for (int i = 0; i < len; i++) {
-      printf("%02X ", buf[i]);
+      // prevent sign extension (unsigned char)
+      printf("%02X ", (unsigned char)buf[i]);
   }
 
   printf("\n");
@@ -163,12 +225,13 @@ int main(int argc, char **argv) {
 
       // Verify valid command
       if (verify_command(buf) < 0) {
-        fprintf(stderr,"ERROR, no such command %s", buf);
+        fprintf(stderr,"ERROR, no such command %s\n", buf);
         continue;  
       }
 
       // send command
-      n = sendto(sockfd, buf, strlen(buf), 0, &serveraddr, serverlen);
+      //  * TODO: dont need to send BUFSIZE everytime
+      n = sendto(sockfd, buf, BUFSIZE, 0, &serveraddr, serverlen);
       if (n < 0) 
         error("ERROR in sendto");
 
