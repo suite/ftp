@@ -45,14 +45,17 @@ void error(char *msg) {
  * verify_command - parse and verify commands from user
  */
 int verify_command(char *buf) {
+  // hacky but just ignore delete since we use plain text and need filename
+  if (strncmp(buf, "delete ", 7) == 0) {
+    return 1;
+  }
+
   char *token = strtok(buf, " \n");
   if (!token) return -1;
 
   if (strcmp(token, "ls") == 0) {
     return 1;
   } else if (strcmp(token, "exit") == 0) {
-    return 1; 
-  } else if (strcmp(token, "delete") == 0) {
     return 1; 
   } else if (strcmp(token, "put") == 0) {
     // get file name
@@ -78,10 +81,14 @@ int verify_command(char *buf) {
 
     // Setup packet
     size_t filename_l = strlen(filename);
+    int arguments = 8;
 
-    // copy filename first so we dont overwrite
-    int arguments = 6;
+    // copy filename first so we dont overwrite  
     strncpy(buf+arguments, filename, 255);
+
+    // Overwrite rest with file contents
+    int bytes_used = arguments+filename_l;
+    size_t bytes_read = fread(buf+bytes_used, 1, BUFSIZE-bytes_used, fp);
 
     buf[0] = 0x00; // [0] 0x00 = put command
     
@@ -91,17 +98,25 @@ int verify_command(char *buf) {
     buf[3] = 0x00; // [3]/[4] 0x00 00 = count to [0,65535]
     buf[4] = 0x00;
 
-    buf[5] = filename_l; // [3] SET TO BYTE LENGTH OF filename [0,255]
+    buf[5] = (bytes_read >> 8) & 0xFF; // [5]/[6] 0x00 00 = bytes read [0,65535]
+    buf[6] = bytes_read & 0xFF;        // big endian
 
-    // Overwrite rest with file contents
-    int bytes_used = arguments+filename_l;
+    buf[7] = filename_l; // [3] SET TO BYTE LENGTH OF filename [0,255]
+
     
-    size_t bytes_read = fread(buf+bytes_used, 1, BUFSIZE-bytes_used, fp);
     printf("read %ld bytes\n", bytes_read);
-    print_hex(buf, BUFSIZE);
 
     // Final packet size
     bytes_used += bytes_read;
+    printf("Final packet size %d\n", bytes_used);
+
+    // put bytes_read into [5] and [6]
+
+
+
+    print_hex(buf, BUFSIZE);
+
+   
 
     // make sure to close
     if(fclose(fp) < 0) return -1; 
@@ -198,7 +213,7 @@ int main(int argc, char **argv) {
       if (pending_response) {
         // wait for full response
         n = recvfrom(sockfd, buf, BUFSIZE, 0, &serveraddr, &serverlen);
-        if (n < 0) 
+        if (n < 0) // TODO: send better msg (most likely time out)
           error("ERROR in recvfrom");
        
         printf("\n[Server]: %s\n", buf);

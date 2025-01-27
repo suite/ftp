@@ -69,9 +69,10 @@ int execute_buf(char *buf) {
     return 1; 
   } else if (token && strcmp(token, "delete") == 0) {
     char *filename = strtok(NULL, "\n"); 
+    printf("delete command detected on server %s\n", filename);
     if(!filename) return -1;
 
-    printf("delete command detected on server %s\n", filename);
+    
     
     char* result;
     if(remove(filename) == 0) {
@@ -90,14 +91,25 @@ int execute_buf(char *buf) {
     print_hex(buf, BUFSIZE);
     // printf("counter: %02X\n", buf[1]);
     // printf("count to: %02X\n", buf[2]);
-    int arguments = 6;
+    int arguments = 8;
     int counter_1 = buf[1];
     int counter_2 = buf[2];
 
     int count_to_1 = buf[3];
     int count_to_2 = buf[4];
 
-    int filename_l = buf[5];
+    int bytes_read_1 = buf[5];
+    int bytes_read_2 = buf[6];
+
+    // read in buf[5] and buf[6] for bytes read
+    int network_order_value;
+    memcpy(&network_order_value, &buf[5], 2);
+
+    int bytes_read = ntohs(network_order_value);
+
+    printf("Server recieved file of %d bytes\n", bytes_read);
+
+    int filename_l = buf[7];
 
     char *filename = malloc(filename_l + 1); // +1 for null terminator
     strncpy(filename, buf + arguments, filename_l);
@@ -114,7 +126,7 @@ int execute_buf(char *buf) {
     int bytes_used = arguments+filename_l;
 
     // TODO: BUFSIZE-bytes_used, bytes_used should include bytes written!!! will corrupt
-    size_t bytes_written = fwrite(buf+bytes_used, 1, BUFSIZE-bytes_used, fp);
+    size_t bytes_written = fwrite(buf+bytes_used, 1, bytes_read, fp);
     printf("Wrote %ld bytes\n", bytes_written);
 
     fclose(fp);
@@ -224,6 +236,7 @@ int main(int argc, char **argv) {
     // execute buf runs command and puts response back into buf
     if (execute_buf(buf) < 0) {
       fprintf(stderr,"ERROR, could not execute command\n");
+      // TODO: send back error message
       continue;  
     }
     
