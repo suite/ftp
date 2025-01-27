@@ -12,6 +12,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include "util.h"
 
 #define BUFSIZE 1024
 
@@ -69,11 +70,8 @@ int execute_buf(char *buf) {
     return 1; 
   } else if (token && strcmp(token, "delete") == 0) {
     char *filename = strtok(NULL, "\n"); 
-    printf("delete command detected on server %s\n", filename);
     if(!filename) return -1;
 
-    
-    
     char* result;
     if(remove(filename) == 0) {
       result = "Deleted file";
@@ -85,55 +83,15 @@ int execute_buf(char *buf) {
     bzero(buf, BUFSIZE);
     strncpy(buf, result, BUFSIZE - 1);
     return 1; 
+  } else if (token && strcmp(token, "get") == 0) {
+    char *filename = strtok(NULL, "\n"); 
+    return createFilePacket(buf, filename, BUFSIZE, 0x01);
   } else if (buf[0] == 0x00) {
-
-    printf("PUT BINARY CALL\n");
-    print_hex(buf, BUFSIZE);
-    // printf("counter: %02X\n", buf[1]);
-    // printf("count to: %02X\n", buf[2]);
-    int arguments = 8;
-    int counter_1 = buf[1];
-    int counter_2 = buf[2];
-
-    int count_to_1 = buf[3];
-    int count_to_2 = buf[4];
-
-    int bytes_read_1 = buf[5];
-    int bytes_read_2 = buf[6];
-
-    // read in buf[5] and buf[6] for bytes read
-    int network_order_value;
-    memcpy(&network_order_value, &buf[5], 2);
-
-    int bytes_read = ntohs(network_order_value);
-
-    printf("Server recieved file of %d bytes\n", bytes_read);
-
-    int filename_l = buf[7];
-
-    char *filename = malloc(filename_l + 1); // +1 for null terminator
-    strncpy(filename, buf + arguments, filename_l);
-    filename[filename_l] = '\0';
-
-    // if counter < count to
-      // store buffer, seek to end, continue building
-    // else, counter >= count to
-
-    // read file to disk
-    FILE *fp = fopen(filename, "wb");
-    if(fp == NULL) return -1; 
-
-    int bytes_used = arguments+filename_l;
-
-    // TODO: BUFSIZE-bytes_used, bytes_used should include bytes written!!! will corrupt
-    size_t bytes_written = fwrite(buf+bytes_used, 1, bytes_read, fp);
-    printf("Wrote %ld bytes\n", bytes_written);
-
-    fclose(fp);
+    if (readFilePacketToFile(buf) < 0) return -1;
 
     // // clear buf and put result inside
     bzero(buf, BUFSIZE);
-    strncpy(buf, "putting..", BUFSIZE - 1);
+    strncpy(buf, "Put success", BUFSIZE - 1);
     return 1; 
   }
 

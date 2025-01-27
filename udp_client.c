@@ -11,6 +11,7 @@
 #include <netinet/in.h>
 #include <netdb.h> 
 #include <sys/time.h>
+#include "util.h"
 
 #define BUFSIZE 1024
 
@@ -45,8 +46,10 @@ void error(char *msg) {
  * verify_command - parse and verify commands from user
  */
 int verify_command(char *buf) {
-  // hacky but just ignore delete since we use plain text and need filename
+  // hacky but just ignore delete/get since we use plain text and need filename
   if (strncmp(buf, "delete ", 7) == 0) {
+    return 1;
+  } else if (strncmp(buf, "get ", 4) == 0) {
     return 1;
   }
 
@@ -58,80 +61,8 @@ int verify_command(char *buf) {
   } else if (strcmp(token, "exit") == 0) {
     return 1; 
   } else if (strcmp(token, "put") == 0) {
-    // get file name
     char *filename = strtok(NULL, "\n");
-    if(!filename) return -1; 
-
-    // read file (2000bytes)
-    FILE *fp = fopen(filename, "r");
-    if(fp == NULL) return -1;
-    
-    // // get size
-    if(fseek(fp, 0, SEEK_END) < 0) return -1;
-    long size = ftell(fp);
-    if(size < 0) return -1;
-    if(fseek(fp, 0, SEEK_SET));
-
-    printf("Putting File: %s Size: %ld\n", filename, size);
-
-    if(size >= BUFSIZE) {
-      printf("FILE TOO BIG!!!\n");
-      return -1;
-    }
-
-    // Setup packet
-    size_t filename_l = strlen(filename);
-    int arguments = 8;
-
-    // copy filename first so we dont overwrite  
-    strncpy(buf+arguments, filename, 255);
-
-    // Overwrite rest with file contents
-    int bytes_used = arguments+filename_l;
-    size_t bytes_read = fread(buf+bytes_used, 1, BUFSIZE-bytes_used, fp);
-
-    buf[0] = 0x00; // [0] 0x00 = put command
-    
-    buf[1] = 0x00; // [1]/[2] 0x00 00 = counter [0,65535]
-    buf[2] = 0x00;
-
-    buf[3] = 0x00; // [3]/[4] 0x00 00 = count to [0,65535]
-    buf[4] = 0x00;
-
-    buf[5] = (bytes_read >> 8) & 0xFF; // [5]/[6] 0x00 00 = bytes read [0,65535]
-    buf[6] = bytes_read & 0xFF;        // big endian
-
-    buf[7] = filename_l; // [3] SET TO BYTE LENGTH OF filename [0,255]
-
-    
-    printf("read %ld bytes\n", bytes_read);
-
-    // Final packet size
-    bytes_used += bytes_read;
-    printf("Final packet size %d\n", bytes_used);
-
-    // put bytes_read into [5] and [6]
-
-
-
-    print_hex(buf, BUFSIZE);
-
-   
-
-    // make sure to close
-    if(fclose(fp) < 0) return -1; 
-
-    // num sends = 2000/BUFSIZE (1024)
-    // num sends 2
-    // put 1 2 [first chunk of data]
-    // wait for server ack
-    // put 2 2 [second and final chunk of data]
-    // wait for server ack
-    // transferred
-
-    // set pending_message = 1
-
-    return 1; 
+    return createFilePacket(buf, filename, BUFSIZE, 0x00);
   } 
 
   return -1;
@@ -225,6 +156,16 @@ int main(int argc, char **argv) {
           exit(0);
         }
 
+        // if get response, parse and save file
+        if (buf[0] == 0x01) {
+          printf("Got get response...\n");
+          if (readFilePacketToFile(buf) < 0) {
+             fprintf(stderr, "ERROR coud not read file packet.\n");
+          } else {
+             printf("Successfully read packet to file.\n");
+          }
+        }
+
         pending_response = 0;
         continue;
       }
@@ -255,8 +196,3 @@ int main(int argc, char **argv) {
       
     }
 }
-
-/*
-client - send command
-
-*/
