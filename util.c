@@ -1,23 +1,29 @@
 #include "util.h"
 #include <stdio.h>
 
-int createFilePacket(char *buf, char *filename, int BUFSIZE, int command) {
+void print_hex(char *buf, size_t len) {
+  printf("hex: ");
+  for (int i = 0; i < len; i++) {
+      // prevent sign extension (unsigned char)
+      printf("%02X ", (unsigned char)buf[i]);
+  }
+
+  printf("\n");
+}
+
+int createFilePacket(char *buf, char *filename, int BUFSIZE, int command, int read_offset) {
     if(!filename) return -1; 
     
-    // read file
-    FILE *fp = fopen(filename, "r");
+    // read file in binary mode
+    FILE *fp = fopen(filename, "rb");
     if(fp == NULL) return -1;
 
     // get size
     if(fseek(fp, 0, SEEK_END) < 0) return -1;
     long size = ftell(fp);
     if(size < 0) return -1;
-    if(fseek(fp, 0, SEEK_SET));
-
-    if(size >= BUFSIZE) {
-      printf("FILE TOO BIG!!!\n");
-      return -1;
-    }
+    // seek to read_offset (starts at 0, increases if file cannot fit in 1 buffer)
+    if(fseek(fp, read_offset, SEEK_SET) < 0) return -1; 
 
     // Setup packet
     size_t filename_l = strlen(filename);
@@ -26,26 +32,41 @@ int createFilePacket(char *buf, char *filename, int BUFSIZE, int command) {
     // copy filename first so we dont overwrite  
     strncpy(buf+arguments, filename, 255);
 
-    // Overwrite rest with file contents
     int bytes_used = arguments+filename_l;
-    size_t bytes_read = fread(buf+bytes_used, 1, BUFSIZE-bytes_used, fp);
+    int packet_bufsize = BUFSIZE-bytes_used;
 
+    // we'll have to send more then one packet...
+    int count_to = 0x00;
+    if(size > packet_bufsize) {
+        count_to = (int)((size + packet_bufsize - 1) / packet_bufsize);
+        printf("File size (%d) bigger than buffer size %d bytes. count_to %d\n", size, packet_bufsize, count_to);
+    } // TODO :continue here
+
+    // Overwrite rest with file contents
+
+    size_t bytes_read = fread(buf+bytes_used, 1, BUFSIZE-bytes_used, fp);
+    printf("Read %d bytes\n", bytes_read);
+    // 
+   
     buf[0] = command; // [0] command
     
     buf[1] = 0x00; // [1]/[2] 0x00 00 = counter [0,65535]
     buf[2] = 0x00;
 
-    buf[3] = 0x00; // [3]/[4] 0x00 00 = count to [0,65535]
-    buf[4] = 0x00;
+    buf[3] = (count_to >> 8) & 0xFF; // [3]/[4] 0x00 00 = count to [0,65535]
+    buf[4] = count_to & 0xFF;
 
     buf[5] = (bytes_read >> 8) & 0xFF; // [5]/[6] 0x00 00 = bytes read [0,65535]
     buf[6] = bytes_read & 0xFF;        // big endian
 
     buf[7] = filename_l; // [3] SET TO BYTE LENGTH OF filename [0,255]
 
+    print_hex(buf, BUFSIZE);
+
     if(fclose(fp) < 0) return -1; 
 
-    return 1;
+    // send the new offset
+    return read_offset + bytes_read;;
 }
 
 int readFilePacketToFile(char *buf) {

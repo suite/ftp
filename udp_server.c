@@ -24,16 +24,6 @@ void error(char *msg) {
   exit(1);
 }
 
-void print_hex(char *buf, size_t len) {
-  printf("hex: ");
-  for (int i = 0; i < len; i++) {
-      // prevent sign extension (unsigned char)
-      printf("%02X ", (unsigned char)buf[i]);
-  }
-
-  printf("\n");
-}
-
 /*
  * execute_buf - parse and execute commands from user
  */
@@ -85,8 +75,8 @@ int execute_buf(char *buf) {
     return 1; 
   } else if (token && strcmp(token, "get") == 0) {
     char *filename = strtok(NULL, "\n"); 
-    return createFilePacket(buf, filename, BUFSIZE, 0x01);
-  } else if (buf[0] == 0x00) {
+    return createFilePacket(buf, filename, BUFSIZE, 0x01, 0);
+  } else if (buf[0] == 0x00) { // client puts file
     if (readFilePacketToFile(buf) < 0) return -1;
 
     // // clear buf and put result inside

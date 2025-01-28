@@ -45,7 +45,7 @@ void error(char *msg) {
 /*
  * verify_command - parse and verify commands from user
  */
-int verify_command(char *buf) {
+int verify_command(char *buf, int *pending_messages) {
   // hacky but just ignore delete/get since we use plain text and need filename
   if (strncmp(buf, "delete ", 7) == 0) {
     return 1;
@@ -62,23 +62,17 @@ int verify_command(char *buf) {
     return 1; 
   } else if (strcmp(token, "put") == 0) {
     char *filename = strtok(NULL, "\n");
-    return createFilePacket(buf, filename, BUFSIZE, 0x00);
+
+    // 
+    int bytes_sent = createFilePacket(buf, filename, BUFSIZE, 0x00, 0);
+    if (bytes_sent > 0) {
+       // set pending_message=1
+       *pending_messages = 1;
+       return 1;
+    }
   } 
 
   return -1;
-}
-
-/*
- *
- */
-void print_hex(char *buf, size_t len) {
-  printf("hex: ");
-  for (int i = 0; i < len; i++) {
-      // prevent sign extension (unsigned char)
-      printf("%02X ", (unsigned char)buf[i]);
-  }
-
-  printf("\n");
 }
 
 int main(int argc, char **argv) {
@@ -89,6 +83,7 @@ int main(int argc, char **argv) {
     char *hostname;
     char buf[BUFSIZE];
     int pending_response = 0;
+    int pending_message = 0;
     struct timeval timeout={5,0}; // Timeout for 5 seconds
 
     /* check command line arguments */
@@ -140,12 +135,28 @@ int main(int argc, char **argv) {
     while (1) {
 
       // states: pending_response, pending_message, idle
+      if (pending_message) {
+        // get next chunk of file
+        // send 
+        // check if last
+        // if so pending_message = 0
+        
+        // wait for confirmation last packet was sent
+        n = recvfrom(sockfd, buf, BUFSIZE, 0, &serveraddr, &serverlen);
+        if (n < 0)
+          error("ERROR in recvfrom, timed out");
+
+        // Put success 
+        // TODO
+        
+        // 
+      }
 
       if (pending_response) {
         // wait for full response
         n = recvfrom(sockfd, buf, BUFSIZE, 0, &serveraddr, &serverlen);
-        if (n < 0) // TODO: send better msg (most likely time out)
-          error("ERROR in recvfrom");
+        if (n < 0)
+          error("ERROR in recvfrom, timed out");
        
         printf("\n[Server]: %s\n", buf);
 
@@ -180,7 +191,7 @@ int main(int argc, char **argv) {
       fgets(buf, BUFSIZE, stdin);
 
       // Verify valid command
-      if (verify_command(buf) < 0) {
+      if (verify_command(buf, &pending_message) < 0) {
         fprintf(stderr,"ERROR, no such command %s\n", buf);
         continue;  
       }
