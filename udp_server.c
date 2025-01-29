@@ -27,7 +27,7 @@ void error(char *msg) {
 /*
  * execute_buf - parse and execute commands from user
  */
-int execute_buf(char *buf) {
+int execute_buf(char *buf, FILE **fp, int *write_offset) {
   char *token = strtok(buf, " \n");
 
   // Execute ls
@@ -75,13 +75,61 @@ int execute_buf(char *buf) {
     return 1; 
   } else if (token && strcmp(token, "get") == 0) {
     char *filename = strtok(NULL, "\n"); 
-    return createFilePacket(buf, filename, BUFSIZE, 0x01, 0);
+    return createFilePacket(buf, fp, filename, BUFSIZE, 0x01, 0, 0);// TODO: patch impl
   } else if (buf[0] == 0x00) { // client puts file
-    if (readFilePacketToFile(buf) < 0) return -1;
+
+    int network_order_value;
+    memcpy(&network_order_value, &buf[1], 2);
+    int counter = ntohs(network_order_value);
+
+    int network_order_value_2;
+    memcpy(&network_order_value_2, &buf[3], 2);
+    int count_to = ntohs(network_order_value_2);
+
+    // Create file
+    int bytes_written = readFilePacketToFile(buf, fp, *write_offset);
+    *write_offset += bytes_written;
+    printf("write offset %d\n", *write_offset);
+
+   
+   // if counter == count_to, reset fp 
+
+    // if (new_fp < 0) {
+    //   // Could not read file packet, send back error
+    //   printf("ERROR READING FILE PACKET ON SERVER\n");
+    // };
+
+    
+
 
     // // clear buf and put result inside
     bzero(buf, BUFSIZE);
-    strncpy(buf, "Put success", BUFSIZE - 1);
+    buf[0] = 0x21; // ack packet
+    buf[1] = (counter >> 8) & 0xFF; // send back the counter client gave us
+    buf[2] = counter & 0xFF;
+
+    buf[3]  = (*write_offset >> 56) & 0xFF; // send the total bytes written
+    buf[4]  = (*write_offset >> 48) & 0xFF; // we need to store a big number..
+    buf[5]  = (*write_offset >> 40) & 0xFF; // fix in future
+    buf[6]  = (*write_offset >> 32) & 0xFF;
+    buf[7]  = (*write_offset >> 24) & 0xFF;
+    buf[8]  = (*write_offset >> 16) & 0xFF;
+    buf[9]  = (*write_offset >>  8) & 0xFF;
+    buf[10] = (*write_offset      ) & 0xFF;
+  
+    
+    buf[11] = (count_to >> 8) & 0xFF; // send the total bytes written
+    buf[12] = count_to & 0xFF;
+    // send back ack packet that we read packet
+    // strncpy(buf, "Put success", BUFSIZE - 1);
+
+    // close fp?
+    if (counter >= count_to) {
+      printf("server is done rec.\n");
+      if(fclose(*fp) < 0) {
+        printf("COULD NOT CLOSE FILE ALERT!!!!!!!!!\n\n\n");
+      }
+    }
     return 1; 
   }
 
@@ -99,6 +147,11 @@ int main(int argc, char **argv) {
   char *hostaddrp; /* dotted decimal host addr string */
   int optval; /* flag value for setsockopt */
   int n; /* message byte size */
+
+  /// reset after every file
+  FILE *fp = NULL; /* active file buffer */
+  int write_offset = 0;
+  ///
 
   /* 
    * check command line arguments 
@@ -182,7 +235,7 @@ int main(int argc, char **argv) {
     printf("Executing command %s\n", buf);
     
     // execute buf runs command and puts response back into buf
-    if (execute_buf(buf) < 0) {
+    if (execute_buf(buf, &fp, &write_offset) < 0) {
       fprintf(stderr,"ERROR, could not execute command\n");
       // TODO: send back error message
       continue;  

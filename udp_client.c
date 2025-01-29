@@ -45,7 +45,7 @@ void error(char *msg) {
 /*
  * verify_command - parse and verify commands from user
  */
-int verify_command(char *buf, int *pending_messages) {
+int verify_command(char *buf, int *pending_messages, FILE **fp, char **filename) {
   // hacky but just ignore delete/get since we use plain text and need filename
   if (strncmp(buf, "delete ", 7) == 0) {
     return 1;
@@ -61,11 +61,17 @@ int verify_command(char *buf, int *pending_messages) {
   } else if (strcmp(token, "exit") == 0) {
     return 1; 
   } else if (strcmp(token, "put") == 0) {
-    char *filename = strtok(NULL, "\n");
+    char *filename_token = strtok(NULL, "\n");
 
+    *filename = malloc(strlen(token) + 1);
+    if (*filename == NULL) { return -1; }
+
+    strcpy(*filename, filename_token);
+
+    printf("put read filename %s\n", *filename);
     // 
-    int bytes_sent = createFilePacket(buf, filename, BUFSIZE, 0x00, 0);
-    if (bytes_sent > 0) {
+    int bytes_read = createFilePacket(buf, fp, *filename, BUFSIZE, 0x00, 0, 0);
+    if (bytes_read > 0) {
        // set pending_message=1
        *pending_messages = 1;
        return 1;
@@ -85,6 +91,11 @@ int main(int argc, char **argv) {
     int pending_response = 0;
     int pending_message = 0;
     struct timeval timeout={5,0}; // Timeout for 5 seconds
+
+    // reset after every file
+    FILE *fp = NULL;
+    char *filename;
+    int counter = 0;
 
     /* check command line arguments */
     if (argc != 3) {
@@ -136,6 +147,8 @@ int main(int argc, char **argv) {
 
       // states: pending_response, pending_message, idle
       if (pending_message) {
+
+        printf("In pending message..\n");
         // get next chunk of file
         // send 
         // check if last
@@ -144,19 +157,93 @@ int main(int argc, char **argv) {
         // wait for confirmation last packet was sent
         n = recvfrom(sockfd, buf, BUFSIZE, 0, &serveraddr, &serverlen);
         if (n < 0)
-          error("ERROR in recvfrom, timed out");
+          error("ERROR in pending_message recvfrom, timed out");
 
+        printf("\n[Server]: %s\n", buf);
         // Put success 
-        // TODO
-        
-        // 
+        // TODO: get ack packet, send next packet
+
+      // 
+      // ack says successfully read up to n bytes
+      // createFilePacket(buf, &fp, filename, BUFSIZE, 0x00, 10);
+
+      if (buf[0] == 0x21) {
+        printf("Client recieved ack packet\n");
+        //
+        int network_order_value;
+        memcpy(&network_order_value, &buf[1], 2);
+        int server_counter = ntohs(network_order_value);
+
+        if (server_counter == counter) {
+          printf("Server read packet. Sending next... Counter: %d\n", counter);
+
+          counter += 1;
+
+          int network_order_value_2;
+          memcpy(&network_order_value_2, &buf[11], 2);
+          int count_to = ntohs(network_order_value_2);
+
+          if (counter >= count_to) {
+            printf("WE READ THE WHOLE FILE!!!!!!!!!\n\n\n");
+
+            // CLOSE FP
+      
+            if(fclose(fp) < 0) {
+              printf("COULD NOT CLOSE FILE ALERT!!!!!!!!!\n\n\n");
+            }
+
+            pending_message = 0;
+            pending_response = 0;
+            continue;
+          }
+
+          // int network_order_value_3;
+          // memcpy(&network_order_value_3, &buf[3], 8);
+          // int ack_bytes_written = ntohs(network_order_value_3);
+          uint64_t net_offset;
+          memcpy(&net_offset, &buf[3], sizeof(net_offset)); // read 8 bytes
+          uint64_t ack_bytes_written = be64toh(net_offset);  // convert 64-bit big-endian -> host
+          
+          printf("write offset sent from server %d\n", ack_bytes_written);
+
+          // fill buff with new packet
+          int s = createFilePacket(buf, &fp, filename, BUFSIZE, 0x00, ack_bytes_written, counter);
+          if (s < 0) { error("Couldnt create file packet"); }
+
+          // Add a small delay between packets to prevent buffer overflow
+          // usleep(1000000); // 1ms delay
+
+          n = sendto(sockfd, buf, BUFSIZE, 0, &serveraddr, serverlen);
+          if (n < 0) 
+            error("ERROR in sendto while sending more file packets");
+
+
+          // sent packet, we're done
+          continue;
+
+        } else {
+          printf("debug: server_counter: %d counter: %d\n", server_counter, counter);
+          error("Incorrect packet order.\n");
+        };
+
+      } else {
+        error("ERROR Client recieved unknown packet while waiting for ack.\n");
+      }
+
+       
+
+        // ack packet
+
+        pending_message = 0;
+        pending_response = 0;
+        continue;
       }
 
       if (pending_response) {
         // wait for full response
         n = recvfrom(sockfd, buf, BUFSIZE, 0, &serveraddr, &serverlen);
         if (n < 0)
-          error("ERROR in recvfrom, timed out");
+          error("ERROR in pending_response recvfrom, timed out");
        
         printf("\n[Server]: %s\n", buf);
 
@@ -170,7 +257,8 @@ int main(int argc, char **argv) {
         // if get response, parse and save file
         if (buf[0] == 0x01) {
           printf("Got get response...\n");
-          if (readFilePacketToFile(buf) < 0) {
+          // TODO: patch up impl
+          if (readFilePacketToFile(buf, &fp, 0) < 0) {
              fprintf(stderr, "ERROR coud not read file packet.\n");
           } else {
              printf("Successfully read packet to file.\n");
@@ -191,7 +279,7 @@ int main(int argc, char **argv) {
       fgets(buf, BUFSIZE, stdin);
 
       // Verify valid command
-      if (verify_command(buf, &pending_message) < 0) {
+      if (verify_command(buf, &pending_message, &fp, &filename) < 0) {
         fprintf(stderr,"ERROR, no such command %s\n", buf);
         continue;  
       }
@@ -204,6 +292,5 @@ int main(int argc, char **argv) {
 
       // wait for resposne
       pending_response = 1;
-      
     }
 }

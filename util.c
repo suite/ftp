@@ -11,47 +11,59 @@ void print_hex(char *buf, size_t len) {
   printf("\n");
 }
 
-int createFilePacket(char *buf, char *filename, int BUFSIZE, int command, int read_offset) {
-    if(!filename) return -1; 
+int createFilePacket(char *buf, FILE **fp, char *filename, int BUFSIZE, int command, int read_offset, int counter) {
+    if(!filename) { printf("no file name in create packet\n"); return -1; }; 
     
     // read file in binary mode
-    FILE *fp = fopen(filename, "rb");
-    if(fp == NULL) return -1;
+    if (*fp == NULL) {
+        *fp = fopen(filename, "rb");
+        if(*fp == NULL) { printf("no fp in create packet\n"); return -1; }; 
+    }
 
     // get size
-    if(fseek(fp, 0, SEEK_END) < 0) return -1;
-    long size = ftell(fp);
+    if(fseek(*fp, 0, SEEK_END) < 0) return -1;
+    long size = ftell(*fp);
     if(size < 0) return -1;
     // seek to read_offset (starts at 0, increases if file cannot fit in 1 buffer)
-    if(fseek(fp, read_offset, SEEK_SET) < 0) return -1; 
+    if(fseek(*fp, read_offset, SEEK_SET) < 0) return -1; 
 
     // Setup packet
     size_t filename_l = strlen(filename);
     int arguments = 8;
 
     // copy filename first so we dont overwrite  
-    strncpy(buf+arguments, filename, 255);
+    // strncpy(buf+arguments, filename, 255);
+    memcpy(buf + arguments, filename, filename_l);
+
+    // 00 00 08 00 09 00 EF 01
+    // 00 00 00 00 09 03 EF 09 
 
     int bytes_used = arguments+filename_l;
     int packet_bufsize = BUFSIZE-bytes_used;
 
+    // Clear the buffer after the header and filename to prevent garbage data
+    // memset(buf + bytes_used, 0, BUFSIZE - bytes_used);
+    bzero(buf + bytes_used, BUFSIZE - bytes_used);
+
     // we'll have to send more then one packet...
     int count_to = 0x00;
     if(size > packet_bufsize) {
-        count_to = (int)((size + packet_bufsize - 1) / packet_bufsize);
+        count_to = ((int)((size + packet_bufsize - 1) / packet_bufsize));
         printf("File size (%d) bigger than buffer size %d bytes. count_to %d\n", size, packet_bufsize, count_to);
     } // TODO :continue here
 
-    // Overwrite rest with file contents
+    printf("count_to: %d , counter: %d\n", count_to, counter);
 
-    size_t bytes_read = fread(buf+bytes_used, 1, BUFSIZE-bytes_used, fp);
-    printf("Read %d bytes\n", bytes_read);
+    // Overwrite rest with file contents
+    int remaining = size-read_offset;
+    size_t bytes_read = fread(buf+bytes_used, 1, (remaining < packet_bufsize) ? remaining : packet_bufsize, *fp);
+    printf("Read %d bytes FROM POSITION:%d\n", bytes_read,read_offset);
     // 
    
     buf[0] = command; // [0] command
     
-    buf[1] = 0x00; // [1]/[2] 0x00 00 = counter [0,65535]
-    buf[2] = 0x00;
+    buf[1] = (counter >> 8) & 0xFF; // [1]/[2] 0x00 00 = counter [0,65535]
+    buf[2] = counter & 0xFF;
 
     buf[3] = (count_to >> 8) & 0xFF; // [3]/[4] 0x00 00 = count to [0,65535]
     buf[4] = count_to & 0xFF;
@@ -63,13 +75,14 @@ int createFilePacket(char *buf, char *filename, int BUFSIZE, int command, int re
 
     print_hex(buf, BUFSIZE);
 
-    if(fclose(fp) < 0) return -1; 
+    // TODO: DONT HERE??
+    // if(fclose(*fp) < 0) return -1; 
 
     // send the new offset
     return read_offset + bytes_read;;
 }
 
-int readFilePacketToFile(char *buf) {
+int readFilePacketToFile(char *buf, FILE **fp, int write_offset) {
     int arguments = 8;
     int counter_1 = buf[1];
     int counter_2 = buf[2];
@@ -89,18 +102,28 @@ int readFilePacketToFile(char *buf) {
     int filename_l = buf[7];
 
     char *filename = malloc(filename_l + 1); // +1 for null terminator
-    strncpy(filename, buf + arguments, filename_l);
+    // strncpy(filename, buf + arguments, filename_l);
+    memcpy(filename, buf + arguments, filename_l);
     filename[filename_l] = '\0';
 
     // read file to disk
-    FILE *fp = fopen(filename, "wb");
-    if(fp == NULL) return -1; 
+    // if no file yet
+    if (*fp == NULL) {
+        *fp = fopen(filename, "wb");
+        if(*fp == NULL) return -1; 
+    }
+   
+    // Seek to write_offset
+    if(fseek(*fp, write_offset, SEEK_SET) < 0) return -1; 
 
     int bytes_used = arguments+filename_l;
-    size_t bytes_written = fwrite(buf+bytes_used, 1, bytes_read, fp);
+    
+    size_t bytes_written = fwrite(buf+bytes_used, 1, bytes_read, *fp);
     printf("Wrote %ld bytes\n", bytes_written);
 
-    if(fclose(fp) < 0) return -1;
+    // TODO: dont close here..
+    // if(fclose(*fp) < 0) return -1;
+    fflush(*fp);
 
-    return 1;
+    return bytes_written;
 }
