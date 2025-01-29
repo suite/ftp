@@ -27,7 +27,7 @@ void error(char *msg) {
 /*
  * execute_buf - parse and execute commands from user
  */
-int execute_buf(char *buf, FILE **fp, uint64_t *write_offset) {
+int execute_buf(char *buf, FILE **fp, uint64_t *write_offset, char **filename, int *pending_messages) {
   char *token = strtok(buf, " \n");
 
   // Execute ls
@@ -74,66 +74,26 @@ int execute_buf(char *buf, FILE **fp, uint64_t *write_offset) {
     strncpy(buf, result, BUFSIZE - 1);
     return 1; 
   } else if (token && strcmp(token, "get") == 0) {
-    char *filename = strtok(NULL, "\n"); 
-    return createFilePacket(buf, fp, filename, BUFSIZE, 0x01, 0, 0);// TODO: patch impl
-  } else if (buf[0] == 0x00) { // client puts file
-
-    int network_order_value;
-    memcpy(&network_order_value, &buf[1], 2);
-    int counter = ntohs(network_order_value);
-
-    int network_order_value_2;
-    memcpy(&network_order_value_2, &buf[3], 2);
-    int count_to = ntohs(network_order_value_2);
-
-    // Create file
-    int bytes_written = readFilePacketToFile(buf, fp, *write_offset);
-    *write_offset += bytes_written;
-    printf("write offset %d\n", *write_offset);
-
-   
-   // if counter == count_to, reset fp 
-
-    // if (new_fp < 0) {
-    //   // Could not read file packet, send back error
-    //   printf("ERROR READING FILE PACKET ON SERVER\n");
-    // };
-
+    char *filename_token = strtok(NULL, "\n"); 
     
+    *filename = malloc(strlen(filename_token) + 1);
+    if (*filename == NULL) { return -1; }
 
-
-    // // clear buf and put result inside
-    bzero(buf, BUFSIZE);
-    buf[0] = 0x21; // ack packet
-    buf[1] = (counter >> 8) & 0xFF; // send back the counter client gave us
-    buf[2] = counter & 0xFF;
-
-    buf[3]  = (*write_offset >> 56) & 0xFF; // send the total bytes written
-    buf[4]  = (*write_offset >> 48) & 0xFF; // we need to store a big number..
-    buf[5]  = (*write_offset >> 40) & 0xFF; // fix in future, dont need to send in packet
-    buf[6]  = (*write_offset >> 32) & 0xFF;
-    buf[7]  = (*write_offset >> 24) & 0xFF;
-    buf[8]  = (*write_offset >> 16) & 0xFF;
-    buf[9]  = (*write_offset >>  8) & 0xFF;
-    buf[10] = (*write_offset      ) & 0xFF;
+    strcpy(*filename, filename_token);
   
-    
-    buf[11] = (count_to >> 8) & 0xFF; // send the total bytes written
-    buf[12] = count_to & 0xFF;
-    // send back ack packet that we read packet
-    // strncpy(buf, "Put success", BUFSIZE - 1);
 
-    // close fp?
-    if (counter >= count_to) {
-      printf("server is done rec.\n");
-      if(fclose(*fp) < 0) {
-        printf("COULD NOT CLOSE FILE ALERT!!!!!!!!!\n\n\n");
-      }
-
-      // reset file read vars
-      *fp = NULL; /* active file buffer */
-      *write_offset = 0;
+    int bytes_read = createFilePacket(buf, fp, *filename, BUFSIZE, 0x01, 0, 0);
+    if (bytes_read > 0) {
+       // set pending_message=1
+       *pending_messages = 1;
+       return 1;
     }
+ 
+    return -1;
+  } else if (buf[0] == 0x00) { // client puts file
+    
+    // create ack packet...
+    createAckPacket(buf, fp, BUFSIZE, write_offset);
     return 1; 
   }
 
@@ -152,9 +112,15 @@ int main(int argc, char **argv) {
   int optval; /* flag value for setsockopt */
   int n; /* message byte size */
 
+  int pending_message = 0;
+
   /// reset after every file
   FILE *fp = NULL; /* active file buffer */
   uint64_t write_offset = 0;
+
+  // sending file
+  char *filename;
+  int counter = 0;
   ///
 
   /* 
@@ -210,6 +176,80 @@ int main(int argc, char **argv) {
 
     // pending_response, pending_message, idle
 
+    if (pending_message) {
+        n = recvfrom(sockfd, buf, BUFSIZE, 0, (struct sockaddr *) &clientaddr, &clientlen);
+        if (n < 0)
+          error("ERROR in pending_message recvfrom, timed out");
+
+        printf("\n[Client]: %s\n", buf);
+
+
+        // TODO: move to ack packet util
+        if (buf[0] == 0x21) {
+          printf("Server recieved ack packet\n");
+
+          int network_order_value;
+          memcpy(&network_order_value, &buf[1], 2);
+          int client_counter = ntohs(network_order_value);
+
+          if (client_counter == counter) {
+            printf("Client read packet. Sending next... Counter: %d\n", counter);
+
+            counter += 1;
+
+            int network_order_value_2;
+            memcpy(&network_order_value_2, &buf[11], 2);
+            int count_to = ntohs(network_order_value_2);
+
+            if (counter >= count_to) {
+              printf("WE READ THE WHOLE FILE!!!!!!!!!\n\n\n");
+
+              // CLOSE FP
+
+              if(fclose(fp) < 0) {
+                printf("COULD NOT CLOSE FILE ALERT!!!!!!!!!\n\n\n");
+              }
+
+              // reset file send vars
+              fp = NULL;
+              filename = NULL;
+              counter = 0;
+
+              pending_message = 0;
+              continue;
+            }
+            uint64_t net_offset = 
+              ((uint64_t)(uint8_t)buf[3]  << 56) |  // Most significant byte
+              ((uint64_t)(uint8_t)buf[4]  << 48) |
+              ((uint64_t)(uint8_t)buf[5]  << 40) |
+              ((uint64_t)(uint8_t)buf[6]  << 32) |
+              ((uint64_t)(uint8_t)buf[7]  << 24) |
+              ((uint64_t)(uint8_t)buf[8]  << 16) |
+              ((uint64_t)(uint8_t)buf[9]  << 8)  |
+              ((uint64_t)(uint8_t)buf[10]);        // Least significant byte
+
+            uint64_t ack_bytes_written = net_offset;  // 
+
+            // fill buff with new packet
+            int s = createFilePacket(buf, &fp, filename, BUFSIZE, 0x01, ack_bytes_written, counter);
+            if (s < 0) { error("Couldnt create file packet"); }
+
+            n = sendto(sockfd, buf, BUFSIZE, 0, (struct sockaddr *) &clientaddr, clientlen);
+            if (n < 0) 
+              error("ERROR in sendto while sending more file packets");
+
+
+            // sent packet, we're done
+            continue;
+
+          }
+          
+        }
+
+        pending_message = 0;
+        continue;
+    }
+
     /*
      * recvfrom: receive a UDP datagram from a client
      */
@@ -239,7 +279,7 @@ int main(int argc, char **argv) {
     printf("Executing command %s\n", buf);
     
     // execute buf runs command and puts response back into buf
-    if (execute_buf(buf, &fp, &write_offset) < 0) {
+    if (execute_buf(buf, &fp, &write_offset, &filename, &pending_message) < 0) {
       fprintf(stderr,"ERROR, could not execute command\n");
       // TODO: send back error message
       continue;  

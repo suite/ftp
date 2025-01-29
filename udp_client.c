@@ -98,6 +98,9 @@ int main(int argc, char **argv) {
     char *filename;
     int counter = 0;
 
+    // 
+    uint64_t write_offset = 0;
+
     /* check command line arguments */
     if (argc != 3) {
        fprintf(stderr,"usage: %s <hostname> <port>\n", argv[0]);
@@ -203,18 +206,6 @@ int main(int argc, char **argv) {
             pending_response = 0;
             continue;
           }
-
-          // start here, maybe we have to fix the other nums above as well..
-
-          // int network_order_value_3;
-          // memcpy(&network_order_value_3, &buf[3], 8);
-          // int ack_bytes_written = ntohs(network_order_value_3);
-      
-      
-          // old working
-          // uint64_t net_offset;
-          // memcpy(&net_offset, &buf[3], sizeof(net_offset)); // read 8 bytes
-          // uint64_t ack_bytes_written = be64toh(net_offset);  // convert 64-bit big-endian -> host
           
           uint64_t net_offset = 
               ((uint64_t)(uint8_t)buf[3]  << 56) |  // Most significant byte
@@ -228,15 +219,9 @@ int main(int argc, char **argv) {
 
           uint64_t ack_bytes_written = net_offset;  // 
 
-          printf("write offset sent from server %ld\n", ack_bytes_written);
-          printf("write offset sent from server: %" PRIu64 "\n", ack_bytes_written);
-
           // fill buff with new packet
           int s = createFilePacket(buf, &fp, filename, BUFSIZE, 0x00, ack_bytes_written, counter);
           if (s < 0) { error("Couldnt create file packet"); }
-
-          // Add a small delay between packets to prevent buffer overflow
-          // usleep(1000000); // 1ms delay
 
           n = sendto(sockfd, buf, BUFSIZE, 0, &serveraddr, serverlen);
           if (n < 0) 
@@ -247,17 +232,12 @@ int main(int argc, char **argv) {
           continue;
 
         } else {
-          printf("debug: server_counter: %d counter: %d\n", server_counter, counter);
           error("Incorrect packet order.\n");
         };
 
       } else {
         error("ERROR Client recieved unknown packet while waiting for ack.\n");
       }
-
-       
-
-        // ack packet
 
         pending_message = 0;
         pending_response = 0;
@@ -281,13 +261,10 @@ int main(int argc, char **argv) {
 
         // if get response, parse and save file
         if (buf[0] == 0x01) {
-          printf("Got get response...\n");
-          // TODO: patch up impl
-          if (readFilePacketToFile(buf, &fp, 0) < 0) {
-             fprintf(stderr, "ERROR coud not read file packet.\n");
-          } else {
-             printf("Successfully read packet to file.\n");
-          }
+          printf("CLIENT GOT ACK PACKET FROM SERVER\n");
+          int is_last = createAckPacket(buf, fp, BUFSIZE, &write_offset);
+          pending_response = is_last;
+          continue;
         }
 
         pending_response = 0;
