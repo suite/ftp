@@ -129,6 +129,10 @@ int execute_buf(char *buf, FILE **fp, uint64_t *write_offset) {
       if(fclose(*fp) < 0) {
         printf("COULD NOT CLOSE FILE ALERT!!!!!!!!!\n\n\n");
       }
+
+      // reset file read vars
+      *fp = NULL; /* active file buffer */
+      *write_offset = 0;
     }
     return 1; 
   }

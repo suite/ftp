@@ -193,6 +193,12 @@ int main(int argc, char **argv) {
               printf("COULD NOT CLOSE FILE ALERT!!!!!!!!!\n\n\n");
             }
 
+
+            // reset file send vars
+            fp = NULL;
+            filename = NULL;
+            counter = 0;
+
             pending_message = 0;
             pending_response = 0;
             continue;
