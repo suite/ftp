@@ -12,8 +12,9 @@
 #include <netdb.h> 
 #include <sys/time.h>
 #include "util.h"
+#include <inttypes.h> 
 
-#define BUFSIZE 1024
+#define BUFSIZE 32768
 
 
 
@@ -63,12 +64,12 @@ int verify_command(char *buf, int *pending_messages, FILE **fp, char **filename)
   } else if (strcmp(token, "put") == 0) {
     char *filename_token = strtok(NULL, "\n");
 
-    *filename = malloc(strlen(token) + 1);
+    *filename = malloc(strlen(filename_token) + 1);
     if (*filename == NULL) { return -1; }
 
     strcpy(*filename, filename_token);
 
-    printf("put read filename %s\n", *filename);
+    // printf("put read filename %s\n", *filename);
     // 
     int bytes_read = createFilePacket(buf, fp, *filename, BUFSIZE, 0x00, 0, 0);
     if (bytes_read > 0) {
@@ -197,14 +198,32 @@ int main(int argc, char **argv) {
             continue;
           }
 
+          // start here, maybe we have to fix the other nums above as well..
+
           // int network_order_value_3;
           // memcpy(&network_order_value_3, &buf[3], 8);
           // int ack_bytes_written = ntohs(network_order_value_3);
-          uint64_t net_offset;
-          memcpy(&net_offset, &buf[3], sizeof(net_offset)); // read 8 bytes
-          uint64_t ack_bytes_written = be64toh(net_offset);  // convert 64-bit big-endian -> host
+      
+      
+          // old working
+          // uint64_t net_offset;
+          // memcpy(&net_offset, &buf[3], sizeof(net_offset)); // read 8 bytes
+          // uint64_t ack_bytes_written = be64toh(net_offset);  // convert 64-bit big-endian -> host
           
-          printf("write offset sent from server %d\n", ack_bytes_written);
+          uint64_t net_offset = 
+              ((uint64_t)(uint8_t)buf[3]  << 56) |  // Most significant byte
+              ((uint64_t)(uint8_t)buf[4]  << 48) |
+              ((uint64_t)(uint8_t)buf[5]  << 40) |
+              ((uint64_t)(uint8_t)buf[6]  << 32) |
+              ((uint64_t)(uint8_t)buf[7]  << 24) |
+              ((uint64_t)(uint8_t)buf[8]  << 16) |
+              ((uint64_t)(uint8_t)buf[9]  << 8)  |
+              ((uint64_t)(uint8_t)buf[10]);        // Least significant byte
+
+          uint64_t ack_bytes_written = net_offset;  // 
+
+          printf("write offset sent from server %ld\n", ack_bytes_written);
+          printf("write offset sent from server: %" PRIu64 "\n", ack_bytes_written);
 
           // fill buff with new packet
           int s = createFilePacket(buf, &fp, filename, BUFSIZE, 0x00, ack_bytes_written, counter);

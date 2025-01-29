@@ -1,5 +1,9 @@
 #include "util.h"
 #include <stdio.h>
+#include <stdint.h>
+#include <inttypes.h> 
+#include <string.h>
+#include <stdlib.h>
 
 void print_hex(char *buf, size_t len) {
   printf("hex: ");
@@ -11,7 +15,7 @@ void print_hex(char *buf, size_t len) {
   printf("\n");
 }
 
-int createFilePacket(char *buf, FILE **fp, char *filename, int BUFSIZE, int command, int read_offset, int counter) {
+int createFilePacket(char *buf, FILE **fp, char *filename, int BUFSIZE, int command, uint64_t read_offset, int counter) {
     if(!filename) { printf("no file name in create packet\n"); return -1; }; 
     
     // read file in binary mode
@@ -20,12 +24,31 @@ int createFilePacket(char *buf, FILE **fp, char *filename, int BUFSIZE, int comm
         if(*fp == NULL) { printf("no fp in create packet\n"); return -1; }; 
     }
 
+    // old printf("USING BUFSIZE: %d\n", BUFSIZE);
+
+    // old printf("create file packet readoffset:: %" PRIu64 "\n", read_offset);
+
+   // old  printf("filename: %s", filename);
+
+    size_t filename_l_test = strlen(filename);
+    // old printf("filename length: %zu\n", filename_l_test);
+
+    // policy3030annotedkek.pdf
+
     // get size
-    if(fseek(*fp, 0, SEEK_END) < 0) return -1;
+    if(fseek(*fp, 0, SEEK_END) < 0) { printf("couldnt seek to end\n"); return -1; }; 
+   
+    // old printf("hello?\n");
+   
     long size = ftell(*fp);
-    if(size < 0) return -1;
+    
+    // old printf("File size: %ld\n", size);
+
+    if(size < 0)  { printf("size read error\n"); return -1; }; 
     // seek to read_offset (starts at 0, increases if file cannot fit in 1 buffer)
-    if(fseek(*fp, read_offset, SEEK_SET) < 0) return -1; 
+    if(fseek(*fp, read_offset, SEEK_SET) < 0) { printf("could not seek to read_offset\n"); return -1; }; 
+
+    // old printf("File size: %ld\n", size);
 
     // Setup packet
     size_t filename_l = strlen(filename);
@@ -41,6 +64,12 @@ int createFilePacket(char *buf, FILE **fp, char *filename, int BUFSIZE, int comm
     int bytes_used = arguments+filename_l;
     int packet_bufsize = BUFSIZE-bytes_used;
 
+    if (bytes_used > BUFSIZE) {
+        printf("Buffer overflow: header + filename exceeds BUFSIZE.\n");
+        return -1;
+    }
+
+    
     // Clear the buffer after the header and filename to prevent garbage data
     // memset(buf + bytes_used, 0, BUFSIZE - bytes_used);
     bzero(buf + bytes_used, BUFSIZE - bytes_used);
@@ -49,15 +78,15 @@ int createFilePacket(char *buf, FILE **fp, char *filename, int BUFSIZE, int comm
     int count_to = 0x00;
     if(size > packet_bufsize) {
         count_to = ((int)((size + packet_bufsize - 1) / packet_bufsize));
-        printf("File size (%d) bigger than buffer size %d bytes. count_to %d\n", size, packet_bufsize, count_to);
+       // old  printf("File size (%ld) bigger than buffer size %d bytes. count_to %d\n", size, packet_bufsize, count_to);
     } // TODO :continue here
 
-    printf("count_to: %d , counter: %d\n", count_to, counter);
+   // old  printf("count_to: %d , counter: %d\n", count_to, counter);
 
     // Overwrite rest with file contents
-    int remaining = size-read_offset;
+    uint64_t remaining = size-read_offset;
     size_t bytes_read = fread(buf+bytes_used, 1, (remaining < packet_bufsize) ? remaining : packet_bufsize, *fp);
-    printf("Read %d bytes FROM POSITION:%d\n", bytes_read,read_offset);
+   // old  printf("Read %ld bytes FROM POSITION:%ld\n", bytes_read,read_offset);
     // 
    
     buf[0] = command; // [0] command
@@ -73,7 +102,7 @@ int createFilePacket(char *buf, FILE **fp, char *filename, int BUFSIZE, int comm
 
     buf[7] = filename_l; // [3] SET TO BYTE LENGTH OF filename [0,255]
 
-    print_hex(buf, BUFSIZE);
+    // print_hex(buf, BUFSIZE);
 
     // TODO: DONT HERE??
     // if(fclose(*fp) < 0) return -1; 

@@ -14,7 +14,7 @@
 #include <arpa/inet.h>
 #include "util.h"
 
-#define BUFSIZE 1024
+#define BUFSIZE 32768
 
 /*
  * error - wrapper for perror
@@ -27,7 +27,7 @@ void error(char *msg) {
 /*
  * execute_buf - parse and execute commands from user
  */
-int execute_buf(char *buf, FILE **fp, int *write_offset) {
+int execute_buf(char *buf, FILE **fp, uint64_t *write_offset) {
   char *token = strtok(buf, " \n");
 
   // Execute ls
@@ -110,7 +110,7 @@ int execute_buf(char *buf, FILE **fp, int *write_offset) {
 
     buf[3]  = (*write_offset >> 56) & 0xFF; // send the total bytes written
     buf[4]  = (*write_offset >> 48) & 0xFF; // we need to store a big number..
-    buf[5]  = (*write_offset >> 40) & 0xFF; // fix in future
+    buf[5]  = (*write_offset >> 40) & 0xFF; // fix in future, dont need to send in packet
     buf[6]  = (*write_offset >> 32) & 0xFF;
     buf[7]  = (*write_offset >> 24) & 0xFF;
     buf[8]  = (*write_offset >> 16) & 0xFF;
@@ -150,7 +150,7 @@ int main(int argc, char **argv) {
 
   /// reset after every file
   FILE *fp = NULL; /* active file buffer */
-  int write_offset = 0;
+  uint64_t write_offset = 0;
   ///
 
   /* 
