@@ -34,8 +34,6 @@ int execute_buf(char *buf, FILE **fp, uint64_t *write_offset, char **filename, i
   if (token && strcmp(token, "ls") == 0) {
     // clear out buf to put response in
     bzero(buf, BUFSIZE);
-
-    printf("ls command detected on server\n");
    
     FILE *fp = popen("ls -l", "r");
     if (fp == NULL) {
@@ -45,8 +43,6 @@ int execute_buf(char *buf, FILE **fp, uint64_t *write_offset, char **filename, i
 
     // read BUFSIZE amount of size 1 bytes into buf
     size_t bytes_read = fread(buf, 1, BUFSIZE, fp);
-    printf("read %ld bytes\n", bytes_read);
-    printf("new buf:\n%s\n", buf);
     
     if (pclose(fp) == -1) {
        fprintf(stderr,"ERROR, could not close ls command\n");
@@ -181,23 +177,13 @@ int main(int argc, char **argv) {
         if (n < 0)
           error("ERROR in pending_message recvfrom, timed out");
 
-        printf("\n[Client]: %s\n", buf);
-
-
-        // TODO: move to ack packet util
+        // Recieve ack packet
         if (buf[0] == 0x21) {
-          printf("Server recieved ack packet\n");
-
-          // int network_order_value;
-          // memcpy(&network_order_value, &buf[1], 2);
-          // int client_counter = ntohs(network_order_value);
 
           int client_counter = ((uint16_t)(uint8_t)buf[1]  << 8)  |
               ((uint16_t)(uint8_t)buf[2]);
 
           if (client_counter == counter) {
-            printf("Client read packet. Sending next... Counter: %d\n", counter);
-
             counter += 1;
 
             // int network_order_value_2;
@@ -207,12 +193,12 @@ int main(int argc, char **argv) {
               ((uint16_t)(uint8_t)buf[12]);
 
             if (counter >= count_to) {
-              printf("WE READ THE WHOLE FILE!!!!!!!!!\n\n\n");
+              printf("Read entire file.\n");
 
               // CLOSE FP
 
               if(fclose(fp) < 0) {
-                printf("COULD NOT CLOSE FILE ALERT!!!!!!!!!\n\n\n");
+                printf("Could not close file...\n");
               }
 
               // reset file send vars
