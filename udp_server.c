@@ -243,9 +243,6 @@ int main(int argc, char **argv) {
             if (n < 0) 
               error("ERROR in sendto while sending more file packets");
 
-
-            // sent packet, we're done
-            pending_message = 0;
             continue;
 
           } else {
