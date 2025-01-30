@@ -188,18 +188,23 @@ int main(int argc, char **argv) {
         if (buf[0] == 0x21) {
           printf("Server recieved ack packet\n");
 
-          int network_order_value;
-          memcpy(&network_order_value, &buf[1], 2);
-          int client_counter = ntohs(network_order_value);
+          // int network_order_value;
+          // memcpy(&network_order_value, &buf[1], 2);
+          // int client_counter = ntohs(network_order_value);
+
+          int client_counter = ((uint16_t)(uint8_t)buf[1]  << 8)  |
+              ((uint16_t)(uint8_t)buf[2]);
 
           if (client_counter == counter) {
             printf("Client read packet. Sending next... Counter: %d\n", counter);
 
             counter += 1;
 
-            int network_order_value_2;
-            memcpy(&network_order_value_2, &buf[11], 2);
-            int count_to = ntohs(network_order_value_2);
+            // int network_order_value_2;
+            // memcpy(&network_order_value_2, &buf[11], 2);
+            // int count_to = ntohs(network_order_value_2);
+            int count_to = ((uint16_t)(uint8_t)buf[11]  << 8)  |
+              ((uint16_t)(uint8_t)buf[12]);
 
             if (counter >= count_to) {
               printf("WE READ THE WHOLE FILE!!!!!!!!!\n\n\n");
@@ -240,8 +245,11 @@ int main(int argc, char **argv) {
 
 
             // sent packet, we're done
+            pending_message = 0;
             continue;
 
+          } else {
+            error("Incorrect packet order.\n");
           }
           
         }

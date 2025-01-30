@@ -174,18 +174,24 @@ int main(int argc, char **argv) {
       if (buf[0] == 0x21) {
         printf("Client recieved ack packet\n");
         //
-        int network_order_value;
-        memcpy(&network_order_value, &buf[1], 2);
-        int server_counter = ntohs(network_order_value);
+        // int network_order_value;
+        // memcpy(&network_order_value, &buf[1], 2);
+        // int server_counter = ntohs(network_order_value);
+
+        int server_counter = ((uint16_t)(uint8_t)buf[1]  << 8)  |
+              ((uint16_t)(uint8_t)buf[2]);
 
         if (server_counter == counter) {
           printf("Server read packet. Sending next... Counter: %d\n", counter);
 
           counter += 1;
 
-          int network_order_value_2;
-          memcpy(&network_order_value_2, &buf[11], 2);
-          int count_to = ntohs(network_order_value_2);
+          // int network_order_value_2;
+          // memcpy(&network_order_value_2, &buf[11], 2);
+          // int count_to = ntohs(network_order_value_2);
+
+          int count_to = ((uint16_t)(uint8_t)buf[11]  << 8)  |
+              ((uint16_t)(uint8_t)buf[12]);
 
           if (counter >= count_to) {
             printf("WE READ THE WHOLE FILE!!!!!!!!!\n\n\n");
@@ -262,7 +268,14 @@ int main(int argc, char **argv) {
         // if get response, parse and save file
         if (buf[0] == 0x01) {
           printf("CLIENT GOT ACK PACKET FROM SERVER\n");
-          int is_last = createAckPacket(buf, fp, BUFSIZE, &write_offset);
+          int is_last = createAckPacket(buf, &fp, BUFSIZE, &write_offset);
+          
+
+          // send packet
+          n = sendto(sockfd, buf, BUFSIZE, 0, &serveraddr, serverlen);
+          if (n < 0) 
+            error("ERROR in sendto while sending more file packets");
+         
           pending_response = is_last;
           continue;
         }

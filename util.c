@@ -135,7 +135,7 @@ int readFilePacketToFile(char *buf, FILE **fp, uint64_t write_offset) {
 
     printf("BYTES READ %d\n", bytes_read);
 
-    int filename_l = buf[7];
+    int filename_l = (uint8_t)buf[7];
 
     char *filename = malloc(filename_l + 1); // +1 for null terminator
     // strncpy(filename, buf + arguments, filename_l);
@@ -166,13 +166,21 @@ int readFilePacketToFile(char *buf, FILE **fp, uint64_t write_offset) {
 
 
 int createAckPacket(char *buf, FILE **fp, int BUFSIZE, uint64_t *write_offset) {
-    int network_order_value;
-    memcpy(&network_order_value, &buf[1], 2);
-    int counter = ntohs(network_order_value);
+    // int network_order_value;
+    // memcpy(&network_order_value, &buf[1], 2);
+    // int counter = ntohs(network_order_value);
 
-    int network_order_value_2;
-    memcpy(&network_order_value_2, &buf[3], 2);
-    int count_to = ntohs(network_order_value_2);
+    // int counter = 
+
+    int counter = ((uint16_t)(uint8_t)buf[1]  << 8)  |
+              ((uint16_t)(uint8_t)buf[2]);
+
+    // int network_order_value_2;
+    // memcpy(&network_order_value_2, &buf[3], 2);
+    // int count_to = ntohs(network_order_value_2);
+
+    int count_to = ((uint16_t)(uint8_t)buf[3]  << 8)  |
+              ((uint16_t)(uint8_t)buf[4]);
 
     // Create file
     uint64_t bytes_written = readFilePacketToFile(buf, fp, *write_offset);
@@ -182,6 +190,8 @@ int createAckPacket(char *buf, FILE **fp, int BUFSIZE, uint64_t *write_offset) {
     // // clear buf and put result inside
     bzero(buf, BUFSIZE);
     buf[0] = 0x21; // ack packet
+    
+    
     buf[1] = (counter >> 8) & 0xFF; // send back the counter client gave us
     buf[2] = counter & 0xFF;
 
@@ -198,7 +208,10 @@ int createAckPacket(char *buf, FILE **fp, int BUFSIZE, uint64_t *write_offset) {
     buf[11] = (count_to >> 8) & 0xFF; // send the total bytes written
     buf[12] = count_to & 0xFF;
 
-    if (counter >= count_to) {
+    printf("Counter %d count_to %d\n", counter, count_to);
+
+// TODO: dont need +1??
+    if ((counter+1) >= count_to) {
       printf("final ack packet created.\n");
 
       if(fclose(*fp) < 0) {
@@ -208,8 +221,8 @@ int createAckPacket(char *buf, FILE **fp, int BUFSIZE, uint64_t *write_offset) {
       // reset file read vars
       *fp = NULL; /* active file buffer */
       *write_offset = 0;
-      return 1;
+      return 0;
     }
 
-    return 0;
+    return 1;
 }
