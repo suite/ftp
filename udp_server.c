@@ -14,7 +14,7 @@
 #include <arpa/inet.h>
 #include "util.h"
 
-#define BUFSIZE 1024
+#define BUFSIZE 32768
 
 /*
  * error - wrapper for perror
@@ -24,20 +24,10 @@ void error(char *msg) {
   exit(1);
 }
 
-void print_hex(char *buf, size_t len) {
-  printf("hex: ");
-  for (int i = 0; i < len; i++) {
-      // prevent sign extension (unsigned char)
-      printf("%02X ", (unsigned char)buf[i]);
-  }
-
-  printf("\n");
-}
-
 /*
  * execute_buf - parse and execute commands from user
  */
-int execute_buf(char *buf) {
+int execute_buf(char *buf, FILE **fp, uint64_t *write_offset, char **filename, int *pending_messages) {
   char *token = strtok(buf, " \n");
 
   // Execute ls
@@ -84,14 +74,26 @@ int execute_buf(char *buf) {
     strncpy(buf, result, BUFSIZE - 1);
     return 1; 
   } else if (token && strcmp(token, "get") == 0) {
-    char *filename = strtok(NULL, "\n"); 
-    return createFilePacket(buf, filename, BUFSIZE, 0x01);
-  } else if (buf[0] == 0x00) {
-    if (readFilePacketToFile(buf) < 0) return -1;
+    char *filename_token = strtok(NULL, "\n"); 
+    
+    *filename = malloc(strlen(filename_token) + 1);
+    if (*filename == NULL) { return -1; }
 
-    // // clear buf and put result inside
-    bzero(buf, BUFSIZE);
-    strncpy(buf, "Put success", BUFSIZE - 1);
+    strcpy(*filename, filename_token);
+  
+
+    int bytes_read = createFilePacket(buf, fp, *filename, BUFSIZE, 0x01, 0, 0);
+    if (bytes_read > 0) {
+       // set pending_message=1
+       *pending_messages = 1;
+       return 1;
+    }
+ 
+    return -1;
+  } else if (buf[0] == 0x00) { // client puts file
+    
+    // create ack packet...
+    createAckPacket(buf, fp, BUFSIZE, write_offset);
     return 1; 
   }
 
@@ -109,6 +111,17 @@ int main(int argc, char **argv) {
   char *hostaddrp; /* dotted decimal host addr string */
   int optval; /* flag value for setsockopt */
   int n; /* message byte size */
+
+  int pending_message = 0;
+
+  /// reset after every file
+  FILE *fp = NULL; /* active file buffer */
+  uint64_t write_offset = 0;
+
+  // sending file
+  char *filename;
+  int counter = 0;
+  ///
 
   /* 
    * check command line arguments 
@@ -163,6 +176,85 @@ int main(int argc, char **argv) {
 
     // pending_response, pending_message, idle
 
+    if (pending_message) {
+        n = recvfrom(sockfd, buf, BUFSIZE, 0, (struct sockaddr *) &clientaddr, &clientlen);
+        if (n < 0)
+          error("ERROR in pending_message recvfrom, timed out");
+
+        printf("\n[Client]: %s\n", buf);
+
+
+        // TODO: move to ack packet util
+        if (buf[0] == 0x21) {
+          printf("Server recieved ack packet\n");
+
+          // int network_order_value;
+          // memcpy(&network_order_value, &buf[1], 2);
+          // int client_counter = ntohs(network_order_value);
+
+          int client_counter = ((uint16_t)(uint8_t)buf[1]  << 8)  |
+              ((uint16_t)(uint8_t)buf[2]);
+
+          if (client_counter == counter) {
+            printf("Client read packet. Sending next... Counter: %d\n", counter);
+
+            counter += 1;
+
+            // int network_order_value_2;
+            // memcpy(&network_order_value_2, &buf[11], 2);
+            // int count_to = ntohs(network_order_value_2);
+            int count_to = ((uint16_t)(uint8_t)buf[11]  << 8)  |
+              ((uint16_t)(uint8_t)buf[12]);
+
+            if (counter >= count_to) {
+              printf("WE READ THE WHOLE FILE!!!!!!!!!\n\n\n");
+
+              // CLOSE FP
+
+              if(fclose(fp) < 0) {
+                printf("COULD NOT CLOSE FILE ALERT!!!!!!!!!\n\n\n");
+              }
+
+              // reset file send vars
+              fp = NULL;
+              filename = NULL;
+              counter = 0;
+
+              pending_message = 0;
+              continue;
+            }
+            uint64_t net_offset = 
+              ((uint64_t)(uint8_t)buf[3]  << 56) |  // Most significant byte
+              ((uint64_t)(uint8_t)buf[4]  << 48) |
+              ((uint64_t)(uint8_t)buf[5]  << 40) |
+              ((uint64_t)(uint8_t)buf[6]  << 32) |
+              ((uint64_t)(uint8_t)buf[7]  << 24) |
+              ((uint64_t)(uint8_t)buf[8]  << 16) |
+              ((uint64_t)(uint8_t)buf[9]  << 8)  |
+              ((uint64_t)(uint8_t)buf[10]);        // Least significant byte
+
+            uint64_t ack_bytes_written = net_offset;  // 
+
+            // fill buff with new packet
+            int s = createFilePacket(buf, &fp, filename, BUFSIZE, 0x01, ack_bytes_written, counter);
+            if (s < 0) { error("Couldnt create file packet"); }
+
+            n = sendto(sockfd, buf, BUFSIZE, 0, (struct sockaddr *) &clientaddr, clientlen);
+            if (n < 0) 
+              error("ERROR in sendto while sending more file packets");
+
+            continue;
+
+          } else {
+            error("Incorrect packet order.\n");
+          }
+          
+        }
+
+        pending_message = 0;
+        continue;
+    }
+
     /*
      * recvfrom: receive a UDP datagram from a client
      */
@@ -192,7 +284,7 @@ int main(int argc, char **argv) {
     printf("Executing command %s\n", buf);
     
     // execute buf runs command and puts response back into buf
-    if (execute_buf(buf) < 0) {
+    if (execute_buf(buf, &fp, &write_offset, &filename, &pending_message) < 0) {
       fprintf(stderr,"ERROR, could not execute command\n");
       // TODO: send back error message
       continue;  

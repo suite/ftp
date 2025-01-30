@@ -12,8 +12,9 @@
 #include <netdb.h> 
 #include <sys/time.h>
 #include "util.h"
+#include <inttypes.h> 
 
-#define BUFSIZE 1024
+#define BUFSIZE 32768
 
 
 
@@ -45,7 +46,7 @@ void error(char *msg) {
 /*
  * verify_command - parse and verify commands from user
  */
-int verify_command(char *buf) {
+int verify_command(char *buf, int *pending_messages, FILE **fp, char **filename) {
   // hacky but just ignore delete/get since we use plain text and need filename
   if (strncmp(buf, "delete ", 7) == 0) {
     return 1;
@@ -61,24 +62,24 @@ int verify_command(char *buf) {
   } else if (strcmp(token, "exit") == 0) {
     return 1; 
   } else if (strcmp(token, "put") == 0) {
-    char *filename = strtok(NULL, "\n");
-    return createFilePacket(buf, filename, BUFSIZE, 0x00);
+    char *filename_token = strtok(NULL, "\n");
+
+    *filename = malloc(strlen(filename_token) + 1);
+    if (*filename == NULL) { return -1; }
+
+    strcpy(*filename, filename_token);
+
+    // printf("put read filename %s\n", *filename);
+    // 
+    int bytes_read = createFilePacket(buf, fp, *filename, BUFSIZE, 0x00, 0, 0);
+    if (bytes_read > 0) {
+       // set pending_message=1
+       *pending_messages = 1;
+       return 1;
+    }
   } 
 
   return -1;
-}
-
-/*
- *
- */
-void print_hex(char *buf, size_t len) {
-  printf("hex: ");
-  for (int i = 0; i < len; i++) {
-      // prevent sign extension (unsigned char)
-      printf("%02X ", (unsigned char)buf[i]);
-  }
-
-  printf("\n");
 }
 
 int main(int argc, char **argv) {
@@ -89,7 +90,16 @@ int main(int argc, char **argv) {
     char *hostname;
     char buf[BUFSIZE];
     int pending_response = 0;
+    int pending_message = 0;
     struct timeval timeout={5,0}; // Timeout for 5 seconds
+
+    // reset after every file
+    FILE *fp = NULL;
+    char *filename;
+    int counter = 0;
+
+    // 
+    uint64_t write_offset = 0;
 
     /* check command line arguments */
     if (argc != 3) {
@@ -140,12 +150,111 @@ int main(int argc, char **argv) {
     while (1) {
 
       // states: pending_response, pending_message, idle
+      if (pending_message) {
+
+        printf("In pending message..\n");
+        // get next chunk of file
+        // send 
+        // check if last
+        // if so pending_message = 0
+        
+        // wait for confirmation last packet was sent
+        n = recvfrom(sockfd, buf, BUFSIZE, 0, &serveraddr, &serverlen);
+        if (n < 0)
+          error("ERROR in pending_message recvfrom, timed out");
+
+        printf("\n[Server]: %s\n", buf);
+        // Put success 
+        // TODO: get ack packet, send next packet
+
+      // 
+      // ack says successfully read up to n bytes
+      // createFilePacket(buf, &fp, filename, BUFSIZE, 0x00, 10);
+
+      if (buf[0] == 0x21) {
+        printf("Client recieved ack packet\n");
+        //
+        // int network_order_value;
+        // memcpy(&network_order_value, &buf[1], 2);
+        // int server_counter = ntohs(network_order_value);
+
+        int server_counter = ((uint16_t)(uint8_t)buf[1]  << 8)  |
+              ((uint16_t)(uint8_t)buf[2]);
+
+        if (server_counter == counter) {
+          printf("Server read packet. Sending next... Counter: %d\n", counter);
+
+          counter += 1;
+
+          // int network_order_value_2;
+          // memcpy(&network_order_value_2, &buf[11], 2);
+          // int count_to = ntohs(network_order_value_2);
+
+          int count_to = ((uint16_t)(uint8_t)buf[11]  << 8)  |
+              ((uint16_t)(uint8_t)buf[12]);
+
+          if (counter >= count_to) {
+            printf("WE READ THE WHOLE FILE!!!!!!!!!\n\n\n");
+
+            // CLOSE FP
+      
+            if(fclose(fp) < 0) {
+              printf("COULD NOT CLOSE FILE ALERT!!!!!!!!!\n\n\n");
+            }
+
+
+            // reset file send vars
+            fp = NULL;
+            filename = NULL;
+            counter = 0;
+
+            pending_message = 0;
+            pending_response = 0;
+            continue;
+          }
+          
+          uint64_t net_offset = 
+              ((uint64_t)(uint8_t)buf[3]  << 56) |  // Most significant byte
+              ((uint64_t)(uint8_t)buf[4]  << 48) |
+              ((uint64_t)(uint8_t)buf[5]  << 40) |
+              ((uint64_t)(uint8_t)buf[6]  << 32) |
+              ((uint64_t)(uint8_t)buf[7]  << 24) |
+              ((uint64_t)(uint8_t)buf[8]  << 16) |
+              ((uint64_t)(uint8_t)buf[9]  << 8)  |
+              ((uint64_t)(uint8_t)buf[10]);        // Least significant byte
+
+          uint64_t ack_bytes_written = net_offset;  // 
+
+          // fill buff with new packet
+          int s = createFilePacket(buf, &fp, filename, BUFSIZE, 0x00, ack_bytes_written, counter);
+          if (s < 0) { error("Couldnt create file packet"); }
+
+          n = sendto(sockfd, buf, BUFSIZE, 0, &serveraddr, serverlen);
+          if (n < 0) 
+            error("ERROR in sendto while sending more file packets");
+
+
+          // sent packet, we're done
+          continue;
+
+        } else {
+          error("Incorrect packet order.\n");
+        };
+
+      } else {
+        error("ERROR Client recieved unknown packet while waiting for ack.\n");
+      }
+
+        pending_message = 0;
+        pending_response = 0;
+        continue;
+      }
 
       if (pending_response) {
         // wait for full response
         n = recvfrom(sockfd, buf, BUFSIZE, 0, &serveraddr, &serverlen);
-        if (n < 0) // TODO: send better msg (most likely time out)
-          error("ERROR in recvfrom");
+        if (n < 0)
+          error("ERROR in pending_response recvfrom, timed out");
        
         printf("\n[Server]: %s\n", buf);
 
@@ -158,12 +267,17 @@ int main(int argc, char **argv) {
 
         // if get response, parse and save file
         if (buf[0] == 0x01) {
-          printf("Got get response...\n");
-          if (readFilePacketToFile(buf) < 0) {
-             fprintf(stderr, "ERROR coud not read file packet.\n");
-          } else {
-             printf("Successfully read packet to file.\n");
-          }
+          printf("CLIENT GOT ACK PACKET FROM SERVER\n");
+          int is_last = createAckPacket(buf, &fp, BUFSIZE, &write_offset);
+          
+
+          // send packet
+          n = sendto(sockfd, buf, BUFSIZE, 0, &serveraddr, serverlen);
+          if (n < 0) 
+            error("ERROR in sendto while sending more file packets");
+         
+          pending_response = is_last;
+          continue;
         }
 
         pending_response = 0;
@@ -180,7 +294,7 @@ int main(int argc, char **argv) {
       fgets(buf, BUFSIZE, stdin);
 
       // Verify valid command
-      if (verify_command(buf) < 0) {
+      if (verify_command(buf, &pending_message, &fp, &filename) < 0) {
         fprintf(stderr,"ERROR, no such command %s\n", buf);
         continue;  
       }
@@ -193,6 +307,5 @@ int main(int argc, char **argv) {
 
       // wait for resposne
       pending_response = 1;
-      
     }
 }
